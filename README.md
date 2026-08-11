@@ -36,11 +36,20 @@ Slack channel                Supabase                              GitHub Pages
 
 ## Features
 
+- 🏁 **The Weekly Race** — the default view. Resets every Monday (IST) with a live
+  countdown and closest-race callouts ("Fiza is 1 post from overtaking Dev 👀")
+- 🏆 **Hall of Fame** — each week's champion is enshrined forever
+- 🎖️ **Badges** — 🩸 First Blood, 🐣 Early Bird (before 9am), 🦉 Night Owl (after
+  10pm), 🎩 Hat-trick (3 in a day), ⚡/🌋 streak clubs (7/30 days), 👑 weekly-champion
+  count, 💯 Centurion (100 posts)
+- 📈 **XP levels** — 👻 Ghost → 🌱 Intern → 📈 Rising Voice → 📖 Storyteller →
+  🧠 Thought Leader → 🌟 Influencer → 🏆 LinkedIn Legend (hover a title to see
+  how far to the next level)
 - 👑 Animated podium for the top 3, full ranked list with progress bars
 - 🎉 Confetti + toast the moment someone posts (milestone parties at 10/25/50/100)
 - 📅 This week / This month / All-time views (weeks start Monday, IST)
 - 🔥 Daily posting streaks
-- 📈 14-day activity chart, 🕑 live activity feed with links to the posts
+- 📊 14-day activity chart, 🕑 live activity feed with links to the posts
 - 🌗 Light/dark theme, mobile friendly
 
 ## Setup

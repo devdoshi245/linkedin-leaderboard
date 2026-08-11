@@ -23,13 +23,15 @@
     board: $("board"), emptyMsg: $("emptyMsg"), chart: $("chart"), feed: $("feed"),
     feedEmpty: $("feedEmpty"), channelHint: $("channelHint"), updatedAt: $("updatedAt"),
     toast: $("toast"), confetti: $("confetti"), tooltip: $("tooltip"),
+    raceNudge: $("raceNudge"), raceCountdown: $("raceCountdown"),
+    hof: $("hof"), hofEmpty: $("hofEmpty"),
   };
 
   const state = {
     raw: null,            // snapshot as fetched (members carry per-day counts)
     rawStr: null,         // for change detection
     data: null,           // derived view-model (totals/week/month/streak/daily)
-    view: "total",
+    view: "week",         // the weekly race is the main event
     prevTotals: null,     // { name: total } from previous snapshot, for celebrations
     prevRanks: {},        // { view: { name: rank } } for ▲ indicators
     seenFeedKeys: new Set(),
@@ -88,13 +90,43 @@
       Number(b.total || 0) - Number(a.total || 0) ||
       String(a.name).localeCompare(String(b.name)));
   }
-  function titleFor(m, rank, view) {
-    if (metric(m, view) === 0) return "👻 Yet to post";
-    if (rank === 0) return "👑 LinkedIn Legend";
-    if (rank === 1) return "🥈 Almost Legend";
-    if (rank === 2) return "🥉 Rising Star";
-    if (Number(m.streak || 0) >= 3) return "🔥 On a roll";
-    return "💼 Grinding";
+  /* ---------- levels & badges ---------- */
+  const LEVELS = [
+    { min: 100, icon: "🏆", title: "LinkedIn Legend" },
+    { min: 60,  icon: "🌟", title: "Influencer" },
+    { min: 30,  icon: "🧠", title: "Thought Leader" },
+    { min: 15,  icon: "📖", title: "Storyteller" },
+    { min: 5,   icon: "📈", title: "Rising Voice" },
+    { min: 1,   icon: "🌱", title: "Intern" },
+    { min: 0,   icon: "👻", title: "Ghost" },
+  ];
+  function levelFor(total) {
+    const i = LEVELS.findIndex((l) => total >= l.min);
+    const lvl = LEVELS[i];
+    const next = i > 0 ? LEVELS[i - 1] : null;
+    return {
+      icon: lvl.icon, title: lvl.title, num: LEVELS.length - i,
+      hint: next ? (next.min - total) + " more post" + (next.min - total === 1 ? "" : "s") +
+        " to reach " + next.icon + " " + next.title : "Max level. Bow down.",
+    };
+  }
+
+  const BADGE_DEFS = {
+    first_blood: { e: "🩸", t: "First Blood — the very first post on the board" },
+    early_bird:  { e: "🐣", t: "Early Bird — posted before 9am" },
+    night_owl:   { e: "🦉", t: "Night Owl — posted after 10pm" },
+  };
+  function badgesFor(m) {
+    const out = [];
+    for (const key of m.badges || []) if (BADGE_DEFS[key]) out.push(BADGE_DEFS[key]);
+    if (m.days && Object.values(m.days).some((c) => Number(c) >= 3)) {
+      out.push({ e: "🎩", t: "Hat-trick — 3+ posts in one day" });
+    }
+    if (Number(m.maxStreak || 0) >= 30) out.push({ e: "🌋", t: "30-day streak club" });
+    else if (Number(m.maxStreak || 0) >= 7) out.push({ e: "⚡", t: "7-day streak club" });
+    if (Number(m.weekWins || 0) > 0) out.push({ e: "👑", t: m.weekWins + "× weekly champion" });
+    if (Number(m.total || 0) >= 100) out.push({ e: "💯", t: "Centurion — 100 posts" });
+    return out;
   }
 
   /* ---------- derived stats ----------
@@ -110,6 +142,12 @@
   function shiftDay(ymd, delta) {
     const d = new Date(ymd + "T00:00:00Z");
     d.setUTCDate(d.getUTCDate() + delta);
+    return d.toISOString().slice(0, 10);
+  }
+  function mondayOf(ymd) {
+    const d = new Date(ymd + "T00:00:00Z");
+    const dow = (d.getUTCDay() + 6) % 7; // Mon=0 … Sun=6
+    d.setUTCDate(d.getUTCDate() - dow);
     return d.toISOString().slice(0, 10);
   }
   function derive(raw) {
@@ -139,8 +177,40 @@
       let cursor = days[today] ? today
         : days[shiftDay(today, -1)] ? shiftDay(today, -1) : null;
       while (cursor && days[cursor]) { streak++; cursor = shiftDay(cursor, -1); }
-      return { ...m, total, week, month, streak };
+      // best-ever streak (for the streak-club badges)
+      let maxStreak = 0, run = 0, prev = null;
+      for (const day of Object.keys(days).sort()) {
+        run = prev && shiftDay(prev, 1) === day ? run + 1 : 1;
+        if (run > maxStreak) maxStreak = run;
+        prev = day;
+      }
+      return { ...m, total, week, month, streak, maxStreak };
     });
+
+    // Hall of Fame: winner(s) of each completed week (current week still racing)
+    const weekTotals = new Map(); // weekStart -> Map(memberIndex -> count)
+    members.forEach((m, mi) => {
+      if (!m.days) return;
+      for (const day in m.days) {
+        const wk = mondayOf(day);
+        if (wk >= weekStart) continue;
+        let wm = weekTotals.get(wk);
+        if (!wm) weekTotals.set(wk, (wm = new Map()));
+        wm.set(mi, (wm.get(mi) || 0) + (Number(m.days[day]) || 0));
+      }
+    });
+    const hallOfFame = [...weekTotals.entries()]
+      .map(([wk, wm]) => {
+        const max = Math.max(...wm.values());
+        if (max <= 0) return null;
+        const winners = [...wm.entries()].filter(([, c]) => c === max).map(([mi]) => mi);
+        return { weekStart: wk, count: max, winners };
+      })
+      .filter(Boolean)
+      .sort((a, b) => (a.weekStart < b.weekStart ? 1 : -1));
+    for (const w of hallOfFame) {
+      for (const mi of w.winners) members[mi].weekWins = (members[mi].weekWins || 0) + 1;
+    }
 
     let daily;
     if (members.some((m) => m.days)) {
@@ -155,7 +225,7 @@
     } else {
       daily = Array.isArray(raw.daily) ? raw.daily : [];
     }
-    return { ...raw, members, daily };
+    return { ...raw, members, daily, weekStart, monthStart, hallOfFame };
   }
 
   /* ---------- rendering ---------- */
@@ -164,13 +234,75 @@
     const d = derive(state.raw);
     state.data = d;
     if (!Array.isArray(d.members)) return;
+    // week/month rollover: stale ranks would paint phantom ▲ arrows
+    if (state.lastWeekStart !== d.weekStart) {
+      delete state.prevRanks.week;
+      state.lastWeekStart = d.weekStart;
+    }
+    if (state.lastMonthStart !== d.monthStart) {
+      delete state.prevRanks.month;
+      state.lastMonthStart = d.monthStart;
+    }
     renderStats(d);
+    renderRace(d);
     renderPodium(d);
     renderBoard(d);
+    renderHof(d);
     renderFeed(d);
     renderChart(d);
     els.updatedAt.textContent = d.updatedAt
       ? "Board data updated " + timeAgo(d.updatedAt) : "";
+  }
+
+  function renderRace(d) {
+    // countdown to next Monday 00:00 IST (the weekly reset)
+    const end = Date.parse(shiftDay(d.weekStart, 7) + "T00:00:00+05:30");
+    const ms = Math.max(0, end - Date.now());
+    const dDays = Math.floor(ms / 86400000);
+    const dHours = Math.floor((ms % 86400000) / 3600000);
+    const dMins = Math.floor((ms % 3600000) / 60000);
+    els.raceCountdown.textContent = "⏱ " +
+      (dDays > 0 ? dDays + "d " + dHours + "h" : dHours > 0 ? dHours + "h " + dMins + "m" : dMins + "m") +
+      " left this week";
+
+    const list = sorted(d.members, "week");
+    const w = (m) => metric(m, "week");
+    let msg;
+    if (!list.length || w(list[0]) === 0) {
+      msg = "Nobody has posted this week — first link takes the crown 👑";
+    } else if (list[1] && w(list[1]) === w(list[0])) {
+      msg = list[0].name + " & " + list[1].name + " are tied for the crown 👀";
+    } else {
+      let best = null;
+      for (let i = 1; i < Math.min(list.length, 4); i++) {
+        const gap = w(list[i - 1]) - w(list[i]);
+        if (gap > 0 && (best === null || gap < best.gap)) best = { i, gap };
+      }
+      if (best && best.gap <= 2) {
+        msg = list[best.i].name + " is " + best.gap + " post" + (best.gap === 1 ? "" : "s") +
+          " away from overtaking " + list[best.i - 1].name + " 👀";
+      } else {
+        msg = list[0].name + " leads the week with " + w(list[0]) +
+          (w(list[0]) === 1 ? " post" : " posts") + " 🔥";
+      }
+    }
+    els.raceNudge.textContent = msg;
+  }
+
+  function renderHof(d) {
+    const hof = d.hallOfFame || [];
+    els.hofEmpty.hidden = hof.length > 0;
+    els.hof.innerHTML = hof.slice(0, 8).map((wk, idx) => {
+      const names = wk.winners.map((mi) => d.members[mi]).filter(Boolean)
+        .map((m) => (m.emoji || "") + " " + m.name).join(" & ");
+      return (
+        "<li>" +
+          '<span class="h-medal">' + (idx === 0 ? "🏆" : "👑") + "</span>" +
+          '<div class="h-body"><div class="h-name">' + esc(names) + "</div>" +
+          '<div class="h-week">Week of ' + prettyDay(wk.weekStart) + "</div></div>" +
+          '<span class="h-count">' + wk.count + (wk.count === 1 ? " post" : " posts") + "</span>" +
+        "</li>");
+    }).join("");
   }
 
   function renderStats(d) {
@@ -218,13 +350,20 @@
       const movedUp = prev[m.name] !== undefined && i < prev[m.name];
       const streak = Number(m.streak || 0) >= 2
         ? '<span class="streak" title="' + m.streak + '-day posting streak">🔥 ' + m.streak + "d</span>" : "";
+      const medal = n > 0 && i < 3 ? ["👑", "🥈", "🥉"][i] : String(i + 1);
+      const lv = levelFor(Number(m.total || 0));
+      const badges = badgesFor(m);
+      const badgeHtml = badges.length
+        ? '<span class="badges">' + badges.map((b) =>
+            '<span title="' + esc(b.t) + '">' + b.e + "</span>").join("") + "</span>"
+        : "";
       return (
         '<li class="row">' +
-          '<div class="rank">' + (i + 1) + "</div>" +
+          '<div class="rank">' + medal + "</div>" +
           '<div class="avatar">' + esc(m.emoji || "🙂") + "</div>" +
           '<div class="who">' +
-            '<div class="who-name">' + esc(m.name) + (movedUp ? '<span class="up">▲</span>' : "") + "</div>" +
-            '<div class="who-title">' + titleFor(m, i, state.view) +
+            '<div class="who-name">' + esc(m.name) + badgeHtml + (movedUp ? '<span class="up">▲</span>' : "") + "</div>" +
+            '<div class="who-title" title="' + esc(lv.hint) + '">Lv ' + lv.num + " " + lv.icon + " " + lv.title +
               (m.lastPostAt ? ' · last post ' + timeAgo(m.lastPostAt) : "") + "</div>" +
           "</div>" +
           '<div class="count-cell">' + streak +
@@ -388,12 +527,13 @@
     try {
       const res = await fetch(SNAPSHOT_URL + "?t=" + Date.now(), { cache: "no-store" });
       if (res.status === 400 || res.status === 404) {
-        // board file not created yet — that's an empty board, not an outage
+        // board file not created yet — that's an empty board, not an outage.
+        // Synthesize an empty snapshot so every section renders its empty state
+        // (stats at 0, race bar, Hall of Fame, feed) instead of staying blank.
         state.lastOkFetch = Date.now();
         if (!state.raw) {
-          els.statTotal.textContent = els.statWeek.textContent = els.statToday.textContent = "0";
-          els.statChamp.textContent = "Up for grabs";
-          els.emptyMsg.hidden = false;
+          state.raw = { timezone: "Asia/Kolkata", members: [] };
+          render();
         }
       } else {
         if (!res.ok) throw new Error("HTTP " + res.status);

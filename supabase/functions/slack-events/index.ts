@@ -284,18 +284,31 @@ async function rebuildSnapshot(): Promise<void> {
     return;
   }
 
+  const hourFmt = new Intl.DateTimeFormat("en-GB", {
+    timeZone: TIMEZONE, hour: "2-digit", hour12: false,
+  });
+
   const byMember = new Map<
     number,
-    { days: Record<string, number>; last: string | null }
+    { days: Record<string, number>; last: string | null; earlyBird: boolean; nightOwl: boolean }
   >();
-  for (const m of members) byMember.set(m.id, { days: {}, last: null });
+  for (const m of members) {
+    byMember.set(m.id, { days: {}, last: null, earlyBird: false, nightOwl: false });
+  }
 
+  let firstBlood: { memberId: number; at: string } | null = null;
   for (const post of posts) {
     const bucket = byMember.get(post.member_id);
     if (!bucket) continue;
     const day = dayInTz(post.posted_at);
     bucket.days[day] = (bucket.days[day] ?? 0) + 1;
     if (!bucket.last || post.posted_at > bucket.last) bucket.last = post.posted_at;
+    const hour = parseInt(hourFmt.format(new Date(post.posted_at)), 10);
+    if (hour < 9) bucket.earlyBird = true;
+    if (hour >= 22) bucket.nightOwl = true;
+    if (!firstBlood || post.posted_at < firstBlood.at) {
+      firstBlood = { memberId: post.member_id, at: post.posted_at };
+    }
   }
 
   const memberById = new Map(members.map((m) => [m.id, m]));
@@ -310,9 +323,13 @@ async function rebuildSnapshot(): Promise<void> {
     timezone: TIMEZONE,
     members: members.map((m) => {
       const bucket = byMember.get(m.id)!;
+      const badges: string[] = [];
+      if (bucket.earlyBird) badges.push("early_bird");
+      if (bucket.nightOwl) badges.push("night_owl");
+      if (firstBlood?.memberId === m.id) badges.push("first_blood");
       return {
         id: m.id, name: m.name, emoji: m.emoji,
-        days: bucket.days, lastPostAt: bucket.last,
+        days: bucket.days, lastPostAt: bucket.last, badges,
       };
     }),
     recent,

@@ -39,10 +39,14 @@
       <div class="card-head">
         <h2>The Board</h2>
         <div class="seg" role="tablist" aria-label="Time range">
-          <button class="seg-btn" data-view="week" role="tab">This week</button>
+          <button class="seg-btn active" data-view="week" role="tab" aria-selected="true">This week</button>
           <button class="seg-btn" data-view="month" role="tab">This month</button>
-          <button class="seg-btn active" data-view="total" role="tab" aria-selected="true">All-time</button>
+          <button class="seg-btn" data-view="total" role="tab">All-time</button>
         </div>
+      </div>
+      <div class="race-bar">
+        <span class="race-nudge" id="raceNudge"></span>
+        <span class="race-countdown" id="raceCountdown" title="The weekly race resets every Monday"></span>
       </div>
       <div class="podium" id="podium" aria-label="Top three"></div>
       <ol class="board" id="board"></ol>
@@ -50,6 +54,11 @@
     </section>
 
     <aside class="side">
+      <section class="card">
+        <div class="card-head"><h2>🏆 Hall of Fame</h2></div>
+        <ul class="hof" id="hof"></ul>
+        <p class="empty" id="hofEmpty" hidden>Weekly champions get enshrined here every Monday. Win a week, live forever 👑</p>
+      </section>
       <section class="card">
         <div class="card-head"><h2>Last 14 days</h2></div>
         <div class="chart-wrap" id="chart" aria-label="Posts per day, last 14 days"></div>
