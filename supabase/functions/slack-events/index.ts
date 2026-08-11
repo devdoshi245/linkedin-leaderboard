@@ -8,6 +8,10 @@
 //   SLACK_BOT_TOKEN       — Slack app → OAuth → Bot User OAuth Token (xoxb-…)
 //                           used once per person to match their Slack profile
 //                           name to a leaderboard member.
+// Optional:
+//   SLACK_CHANNEL_ID      — comma-separated allowlist of channel IDs (C0…).
+//                           When set, events from any other channel are
+//                           ignored, even if the bot is a member there.
 // (SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY are injected automatically.)
 
 import { createClient } from "npm:@supabase/supabase-js@2";
@@ -100,8 +104,15 @@ function extractLinkedInUrl(text: string): string | null {
   return m ? m[0].replace(/[>,.)\]]+$/, "") : null;
 }
 
+function channelAllowed(channel: string | undefined): boolean {
+  const allow = (Deno.env.get("SLACK_CHANNEL_ID") ?? "")
+    .split(",").map((s) => s.trim()).filter(Boolean);
+  return allow.length === 0 || (!!channel && allow.includes(channel));
+}
+
 async function handleEvent(ev: any): Promise<void> {
   if (!ev || ev.type !== "message") return;
+  if (!channelAllowed(ev.channel)) return;
   if (ev.bot_id || ev.subtype === "bot_message") return;
 
   if (ev.subtype === "message_deleted") {
