@@ -25,7 +25,12 @@ const SNAPSHOT_FILE = "leaderboard.json";
 const LINKEDIN_RE = /https?:\/\/(?:[a-z0-9-]+\.)*linkedin\.com\/[^\s<>|"']+/i;
 
 Deno.serve(async (req) => {
-  if (req.method !== "POST") return new Response("ok");
+  if (req.method !== "POST") {
+    // Opening the function URL in a browser (GET) rebuilds the snapshot —
+    // used to seed the board file after setup and as a manual refresh.
+    await rebuildSnapshot();
+    return new Response("ok");
+  }
   const body = await req.text();
 
   let payload: any;
@@ -153,7 +158,9 @@ async function recordPost(
       channel: channel ?? null,
       posted_at: postedAt,
     },
-    { onConflict: "slack_ts", ignoreDuplicates: true },
+    // Update on conflict so an edited message replaces its URL; Slack retries
+    // rewrite identical values, so counting stays deduped either way.
+    { onConflict: "slack_ts", ignoreDuplicates: false },
   );
   if (error) {
     console.error("insert failed:", error);
@@ -230,79 +237,57 @@ function dayInTz(iso: string | Date): string {
   }).format(typeof iso === "string" ? new Date(iso) : iso);
 }
 
-function shiftDay(ymd: string, delta: number): string {
-  const d = new Date(ymd + "T00:00:00Z");
-  d.setUTCDate(d.getUTCDate() + delta);
-  return d.toISOString().slice(0, 10);
+// PostgREST caps a single response at 1000 rows — page through everything.
+async function fetchAllPosts(): Promise<
+  { member_id: number; url: string | null; posted_at: string }[]
+> {
+  const PAGE = 1000;
+  const all: { member_id: number; url: string | null; posted_at: string }[] = [];
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await supabase
+      .from("posts")
+      .select("member_id,url,posted_at")
+      .order("posted_at", { ascending: false })
+      .range(from, from + PAGE - 1);
+    if (error) {
+      console.error("posts page failed:", error);
+      break;
+    }
+    all.push(...(data ?? []));
+    if (!data || data.length < PAGE) break;
+  }
+  return all;
 }
 
+// The snapshot carries raw per-day counts per member; the dashboard computes
+// week/month/streak/today client-side so the numbers roll over at midnight
+// without needing a rebuild.
 async function rebuildSnapshot(): Promise<void> {
-  const [membersRes, postsRes] = await Promise.all([
+  const [membersRes, posts] = await Promise.all([
     supabase.from("members").select("id,name,emoji").order("id"),
-    supabase.from("posts").select("member_id,url,posted_at")
-      .order("posted_at", { ascending: false }),
+    fetchAllPosts(),
   ]);
   const members = membersRes.data;
-  const posts = postsRes.data ?? [];
   if (!members) {
     console.error("could not load members:", membersRes.error);
     return;
   }
 
-  const today = dayInTz(new Date());
-  const weekdayName = new Intl.DateTimeFormat("en-US", {
-    timeZone: TIMEZONE, weekday: "short",
-  }).format(new Date());
-  const dow = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].indexOf(weekdayName);
-  const weekStart = shiftDay(today, -Math.max(0, dow)); // Monday of this week
-  const monthStart = today.slice(0, 8) + "01";
+  const byMember = new Map<
+    number,
+    { days: Record<string, number>; last: string | null }
+  >();
+  for (const m of members) byMember.set(m.id, { days: {}, last: null });
 
-  const byMember = new Map<number, { days: Set<string>; posts: typeof posts }>();
-  for (const m of members) byMember.set(m.id, { days: new Set(), posts: [] });
-
-  const dailyCounts = new Map<string, number>();
   for (const post of posts) {
-    const day = dayInTz(post.posted_at);
-    dailyCounts.set(day, (dailyCounts.get(day) ?? 0) + 1);
     const bucket = byMember.get(post.member_id);
-    if (bucket) {
-      bucket.days.add(day);
-      bucket.posts.push(post);
-    }
+    if (!bucket) continue;
+    const day = dayInTz(post.posted_at);
+    bucket.days[day] = (bucket.days[day] ?? 0) + 1;
+    if (!bucket.last || post.posted_at > bucket.last) bucket.last = post.posted_at;
   }
 
   const memberById = new Map(members.map((m) => [m.id, m]));
-
-  const snapshotMembers = members.map((m) => {
-    const bucket = byMember.get(m.id)!;
-    const mine = bucket.posts; // already newest-first
-    const total = mine.length;
-    let week = 0, month = 0;
-    for (const p of mine) {
-      const day = dayInTz(p.posted_at);
-      if (day >= weekStart) week++;
-      if (day >= monthStart) month++;
-    }
-    // streak: consecutive days with ≥1 post, ending today or yesterday
-    let streak = 0;
-    let cursor = bucket.days.has(today) ? today
-      : bucket.days.has(shiftDay(today, -1)) ? shiftDay(today, -1) : null;
-    while (cursor && bucket.days.has(cursor)) {
-      streak++;
-      cursor = shiftDay(cursor, -1);
-    }
-    return {
-      id: m.id, name: m.name, emoji: m.emoji,
-      total, week, month, streak,
-      lastPostAt: mine.length ? mine[0].posted_at : null,
-    };
-  });
-
-  const daily = [];
-  for (let i = 13; i >= 0; i--) {
-    const day = shiftDay(today, -i);
-    daily.push({ date: day, count: dailyCounts.get(day) ?? 0 });
-  }
 
   const recent = posts.slice(0, 12).map((p) => {
     const m = memberById.get(p.member_id);
@@ -312,9 +297,14 @@ async function rebuildSnapshot(): Promise<void> {
   const snapshot = {
     updatedAt: new Date().toISOString(),
     timezone: TIMEZONE,
-    members: snapshotMembers,
+    members: members.map((m) => {
+      const bucket = byMember.get(m.id)!;
+      return {
+        id: m.id, name: m.name, emoji: m.emoji,
+        days: bucket.days, lastPostAt: bucket.last,
+      };
+    }),
     recent,
-    daily,
   };
 
   const { error } = await supabase.storage.from(BUCKET).upload(

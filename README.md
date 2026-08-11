@@ -54,6 +54,11 @@ Slack channel                Supabase                              GitHub Pages
    In the function's settings, **turn OFF "Verify JWT"** (Slack can't send auth
    headers). Or with the CLI: `supabase functions deploy slack-events` (the
    included `config.toml` disables JWT verification).
+   Then **open the function URL once in your browser**
+   (`https://cuixaylpnioceqwdibad.supabase.co/functions/v1/slack-events`) —
+   a GET builds the initial board file so the dashboard shows the empty
+   leaderboard instead of waiting for the first post. (Also handy any time
+   you edit members and want the board refreshed immediately.)
 3. **Edge Functions → slack-events → Secrets**, add:
    - `SLACK_SIGNING_SECRET` — from step 2 below
    - `SLACK_BOT_TOKEN` — from step 2 below
@@ -69,7 +74,8 @@ Slack channel                Supabase                              GitHub Pages
 4. **Event Subscriptions** → confirm the Request URL shows **Verified** ✓
    (it points at the edge function).
 5. In the leaderboard channel, run `/invite @leaderboard-bot`.
-   The bot only receives events for channels it's in.
+   The bot only receives events for channels it's in. Public and private
+   channels both work (the manifest includes `groups:history` + `message.groups`).
 
 That's it. Post a LinkedIn URL in the channel and watch the board.
 
@@ -89,14 +95,17 @@ lives in [`config.js`](config.js):
 - Any message in the channel containing a `linkedin.com` link = **+1** for the poster.
 - Reposting the same message twice counts twice (be honorable 😄), but Slack
   retries/edits never double-count — deduped by message timestamp.
-- Deleting your Slack message removes the point. Editing the link out does too.
+- Deleting your Slack message removes the point. Editing the link out does too,
+  and editing to a different link updates the feed.
 - Messages from people not on the board are ignored.
+- Members go by first name — the board matches the first name of your Slack
+  profile, so spelling variations in surnames don't matter.
 
 ## Adding / removing people
 
-Run SQL in Supabase (`insert into members (name, emoji) values ('New Person', '🦊');`
-or `delete from members where name = '…';`). The board picks it up on the next post —
-or invoke the function's snapshot rebuild by posting any LinkedIn link.
+Run SQL in Supabase (`insert into members (name, emoji) values ('Priya', '🦊');`
+or `delete from members where name = '…';` — first names only). Then open the
+function URL once (GET = snapshot rebuild) or wait for the next post.
 
 ## Troubleshooting
 
@@ -104,5 +113,7 @@ or invoke the function's snapshot rebuild by posting any LinkedIn link.
 |---|---|
 | Request URL won't verify | Function deployed? JWT verification off? |
 | Posts don't count | Bot invited to the channel? Secrets set? Edge function logs (Supabase → Edge Functions → Logs) |
-| Person not matched | Their Slack profile name should resemble their leaderboard name; or set it manually: `update members set slack_user_id = 'U0…' where name = '…';` |
+| Posts don't count AND function logs show no requests | Slack isn't delivering events: re-check Event Subscriptions shows Verified and the bot is in the channel (for private channels the app needs `groups:history` + `message.groups`, included in the manifest) |
+| Fresh board stuck on "RECONNECTING…" | The board file doesn't exist yet — open the function URL once in a browser (see step 1.2) |
+| Person not matched | Their Slack profile's first name should match their leaderboard name; or set it manually: `update members set slack_user_id = 'U0…' where name = '…';` |
 | Board feels slow | Add the anon key to `config.js` for instant realtime |

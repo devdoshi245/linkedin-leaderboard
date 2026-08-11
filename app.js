@@ -26,7 +26,9 @@
   };
 
   const state = {
-    data: null,
+    raw: null,            // snapshot as fetched (members carry per-day counts)
+    rawStr: null,         // for change detection
+    data: null,           // derived view-model (totals/week/month/streak/daily)
     view: "total",
     prevTotals: null,     // { name: total } from previous snapshot, for celebrations
     prevRanks: {},        // { view: { name: rank } } for ▲ indicators
@@ -95,10 +97,73 @@
     return "💼 Grinding";
   }
 
+  /* ---------- derived stats ----------
+   * The snapshot ships raw per-day counts per member ({"2026-08-11": 2, …});
+   * totals, week/month, streaks, and the daily series are computed here at
+   * render time so the board rolls over correctly at midnight / Monday even
+   * when nobody has posted for a while. */
+  function dayInTz(date, tz) {
+    return new Intl.DateTimeFormat("en-CA", {
+      timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit",
+    }).format(date);
+  }
+  function shiftDay(ymd, delta) {
+    const d = new Date(ymd + "T00:00:00Z");
+    d.setUTCDate(d.getUTCDate() + delta);
+    return d.toISOString().slice(0, 10);
+  }
+  function derive(raw) {
+    const tz = raw.timezone || "Asia/Kolkata";
+    const now = new Date();
+    const today = dayInTz(now, tz);
+    const dow = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].indexOf(
+      new Intl.DateTimeFormat("en-US", { timeZone: tz, weekday: "short" }).format(now));
+    const weekStart = shiftDay(today, -Math.max(0, dow)); // Monday of this week
+    const monthStart = today.slice(0, 8) + "01";
+
+    const members = (raw.members || []).map((m) => {
+      const days = m.days;
+      if (!days) {
+        // legacy snapshot shape with precomputed aggregates
+        return { ...m, total: Number(m.total || 0), week: Number(m.week || 0),
+                 month: Number(m.month || 0), streak: Number(m.streak || 0) };
+      }
+      let total = 0, week = 0, month = 0;
+      for (const day in days) {
+        const c = Number(days[day]) || 0;
+        total += c;
+        if (day >= weekStart) week += c;
+        if (day >= monthStart) month += c;
+      }
+      let streak = 0;
+      let cursor = days[today] ? today
+        : days[shiftDay(today, -1)] ? shiftDay(today, -1) : null;
+      while (cursor && days[cursor]) { streak++; cursor = shiftDay(cursor, -1); }
+      return { ...m, total, week, month, streak };
+    });
+
+    let daily;
+    if (members.some((m) => m.days)) {
+      daily = [];
+      for (let i = 13; i >= 0; i--) {
+        const day = shiftDay(today, -i);
+        daily.push({
+          date: day,
+          count: members.reduce((n, m) => n + (m.days ? Number(m.days[day]) || 0 : 0), 0),
+        });
+      }
+    } else {
+      daily = Array.isArray(raw.daily) ? raw.daily : [];
+    }
+    return { ...raw, members, daily };
+  }
+
   /* ---------- rendering ---------- */
   function render() {
-    const d = state.data;
-    if (!d || !Array.isArray(d.members)) return;
+    if (!state.raw) return;
+    const d = derive(state.raw);
+    state.data = d;
+    if (!Array.isArray(d.members)) return;
     renderStats(d);
     renderPodium(d);
     renderBoard(d);
@@ -322,17 +387,30 @@
   async function fetchData() {
     try {
       const res = await fetch(SNAPSHOT_URL + "?t=" + Date.now(), { cache: "no-store" });
-      if (!res.ok) throw new Error("HTTP " + res.status);
-      const data = await res.json();
-      state.lastOkFetch = Date.now();
-      const changed = JSON.stringify(data) !== JSON.stringify(state.data);
-      state.data = data;
-      if (changed) {
-        celebrate(data);
-        render();
+      if (res.status === 400 || res.status === 404) {
+        // board file not created yet — that's an empty board, not an outage
+        state.lastOkFetch = Date.now();
+        if (!state.raw) {
+          els.statTotal.textContent = els.statWeek.textContent = els.statToday.textContent = "0";
+          els.statChamp.textContent = "Up for grabs";
+          els.emptyMsg.hidden = false;
+        }
+      } else {
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        const raw = await res.json();
+        state.lastOkFetch = Date.now();
+        const rawStr = JSON.stringify(raw);
+        const changed = rawStr !== state.rawStr;
+        state.raw = raw;
+        state.rawStr = rawStr;
+        const d = derive(raw);
+        if (changed) {
+          celebrate(d);
+          render();
+        }
+        state.prevTotals = Object.fromEntries(d.members.map((m) => [m.name, Number(m.total || 0)]));
+        state.firstLoad = false;
       }
-      state.prevTotals = Object.fromEntries(data.members.map((m) => [m.name, Number(m.total || 0)]));
-      state.firstLoad = false;
     } catch (err) {
       // keep showing the last good data; the pill goes stale below
     }
@@ -373,5 +451,5 @@
   fetchData();
   setInterval(() => { if (!document.hidden) fetchData(); }, POLL_MS);
   document.addEventListener("visibilitychange", () => { if (!document.hidden) fetchData(); });
-  setInterval(() => { if (state.data) render(); }, 60000); // keep "x min ago" labels fresh
+  setInterval(() => { if (state.raw) render(); }, 60000); // refresh relative times + midnight rollover
 })();

@@ -30,15 +30,21 @@ create policy "public read members" on public.members for select using (true);
 drop policy if exists "public read posts" on public.posts;
 create policy "public read posts" on public.posts for select using (true);
 
--- The magnificent seven
+-- The roster (first names only — keeps Slack profile-name matching forgiving)
 insert into public.members (name, emoji) values
-  ('Dev Doshi', '🦁'),
-  ('Satyam Tripathi', '🚀'),
-  ('Meenal Singh', '🌟'),
-  ('Fiza Choudhary', '🎨'),
-  ('Sachin Jha', '⚡'),
-  ('Mandeep Sai', '🎯'),
-  ('Shivam', '🐯')
+  ('Dev', '🦁'),
+  ('Satyam', '🚀'),
+  ('Meenal', '🌟'),
+  ('Fiza', '🎨'),
+  ('Sachin', '⚡'),
+  ('Mandeep', '🎯'),
+  ('Shivam', '🐯'),
+  ('Shirish', '🦉'),
+  ('Christina', '🦋'),
+  ('Sasha', '🦊'),
+  ('Jainendra', '🛸'),
+  ('Megha', '🌈'),
+  ('Veena', '🎵')
 on conflict (name) do nothing;
 
 -- Public storage bucket for the leaderboard.json snapshot the dashboard reads.
