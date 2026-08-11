@@ -9,7 +9,7 @@ window.LEADERBOARD_CONFIG = {
   // Without it, the board polls every 4 seconds — still feels live.
   SUPABASE_ANON_KEY: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImN1aXhheWxwbmlvY2Vxd2RpYmFkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY0MzY0ODcsImV4cCI6MjEwMjAxMjQ4N30.0Jlr5tLNyoL2pcga33IzCAftkQEq-Z-Xd5XTIIme_h0",
 
-  TEAM_NAME: "OneGTM Lab",
+  TEAM_NAME: "OneGTMLab",
   CHANNEL_HINT: "#linkedin-leaderboard",
   POLL_MS: 4000,
 };
