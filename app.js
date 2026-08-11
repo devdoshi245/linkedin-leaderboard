@@ -25,6 +25,7 @@
     toast: $("toast"), confetti: $("confetti"), tooltip: $("tooltip"),
     raceNudge: $("raceNudge"), raceCountdown: $("raceCountdown"),
     hof: $("hof"), hofEmpty: $("hofEmpty"), bestPost: $("bestPost"),
+    viral: $("viral"), hypeBoard: $("hypeBoard"), hypeEmpty: $("hypeEmpty"),
   };
 
   const state = {
@@ -188,7 +189,16 @@
         if (run > maxStreak) maxStreak = run;
         prev = day;
       }
-      return { ...m, total, week, month, streak, maxStreak };
+      // hype (engagement points) bucketed by post day, same windows as counts
+      const hype = m.hype || {};
+      let hypeTotal = 0, hypeWeek = 0, hypeMonth = 0;
+      for (const day in hype) {
+        const h = Number(hype[day]) || 0;
+        hypeTotal += h;
+        if (day >= weekStart) hypeWeek += h;
+        if (day >= monthStart) hypeMonth += h;
+      }
+      return { ...m, total, week, month, streak, maxStreak, hypeTotal, hypeWeek, hypeMonth };
     });
 
     // Hall of Fame: winner(s) of each completed week (current week still racing)
@@ -241,7 +251,10 @@
     } else {
       daily = Array.isArray(raw.daily) ? raw.daily : [];
     }
-    return { ...raw, members, daily, weekStart, monthStart, hallOfFame, bestPostWeek };
+    return {
+      ...raw, members, daily, weekStart, monthStart, hallOfFame, bestPostWeek,
+      topPosts: Array.isArray(raw.topPosts) ? raw.topPosts : [],
+    };
   }
 
   /* ---------- rendering ---------- */
@@ -263,6 +276,7 @@
     renderRace(d);
     renderPodium(d);
     renderBoard(d);
+    renderHype(d);
     renderHof(d);
     renderFeed(d);
     renderChart(d);
@@ -312,6 +326,55 @@
         (bp.url ? ' — <a href="' + esc(bp.url) + '" target="_blank" rel="noopener noreferrer">read it ↗</a>' : "");
     } else {
       els.bestPost.hidden = true;
+    }
+  }
+
+  function fmtNum(n) {
+    n = Number(n) || 0;
+    return n >= 10000 ? (n / 1000).toFixed(n >= 100000 ? 0 : 1) + "k" : n.toLocaleString("en-US");
+  }
+
+  function renderHype(d) {
+    const key = { week: "hypeWeek", month: "hypeMonth", total: "hypeTotal" }[state.view] || "hypeTotal";
+    const ranked = [...d.members]
+      .filter((m) => Number(m[key] || 0) > 0)
+      .sort((a, b) => Number(b[key]) - Number(a[key]) ||
+        Number(b.hypeTotal || 0) - Number(a.hypeTotal || 0) ||
+        String(a.name).localeCompare(String(b.name)));
+    const top = (d.topPosts || [])[0];
+    els.hypeEmpty.hidden = ranked.length > 0;
+    if (!ranked.length) {
+      // With measurements on record but none in this window (e.g. Monday on
+      // the week view), don't claim numbers are still on their way.
+      els.hypeEmpty.textContent = top
+        ? "No hype in this window yet — flip to All-time to see the numbers 📊"
+        : "Hype gets measured ~24 hours after each post ⏱ Numbers land here automatically.";
+    }
+    const max = Math.max(1, ...ranked.map((m) => Number(m[key])));
+    els.hypeBoard.innerHTML = ranked.slice(0, 8).map((m, i) => {
+      const n = Number(m[key]);
+      const medal = i < 3 ? ["🚀", "📈", "💬"][i] : String(i + 1);
+      return (
+        '<li class="row">' +
+          '<div class="rank">' + medal + "</div>" +
+          '<div class="avatar">' + esc(m.emoji || "🙂") + "</div>" +
+          '<div class="who"><div class="who-name">' + esc(m.name) + "</div>" +
+            '<div class="who-title">hype from reactions, comments & reposts</div></div>' +
+          '<div class="count-cell">' +
+            '<div class="count-bar"><div class="count-fill hype-fill" style="width:' + Math.round((n / max) * 100) + '%"></div></div>' +
+            '<div class="count-num hype-num">' + fmtNum(n) + "</div>" +
+          "</div>" +
+        "</li>");
+    }).join("");
+
+    if (top) {
+      els.viral.hidden = false;
+      els.viral.innerHTML = "🚀 Most viral: " + esc((top.emoji || "") + " " + top.name) +
+        " — " + fmtNum(top.reactions) + " reactions · " + fmtNum(top.comments) + " comments · " +
+        fmtNum(top.reposts) + " reposts" +
+        (top.url ? ' — <a href="' + esc(top.url) + '" target="_blank" rel="noopener noreferrer">see the post ↗</a>' : "");
+    } else {
+      els.viral.hidden = true;
     }
   }
 

@@ -43,6 +43,12 @@ Slack channel                Supabase                              GitHub Pages
   High scorers get a 💎 Standout mark in the feed, a 💎 badge, and the weekly
   "Post of the week" honor. **Low scores are never shown anywhere** — all
   carrot, no stick. Cost: ~$0.005/post (Apify) + free-tier Gemini.
+- 📣 **Popularity board** *(optional)* — ~24 hours after each post, its LinkedIn
+  engagement is measured once (reactions, comments, reposts — impressions are
+  author-only on LinkedIn and can't be scraped). Hype points =
+  reactions + 2×comments + 3×reposts; a second board ranks the team by hype
+  (follows the week/month/all-time toggle) with a "Most viral" highlight.
+  Runs automatically via an hourly pg_cron job (see setup.sql). +~$0.005/post.
 - 🏆 **Hall of Fame** — each week's champion is enshrined forever
 - 🎖️ **Badges** — 🩸 First Blood, 🐣 Early Bird (before 9am), 🦉 Night Owl (after
   10pm), 🎩 Hat-trick (3 in a day), ⚡/🌋 streak clubs (7/30 days), 👑 weekly-champion

@@ -23,6 +23,23 @@ create table if not exists public.posts (
 -- Kept as an idempotent alter so re-running this file upgrades old installs.
 alter table public.posts add column if not exists quality_score int;
 
+-- Post engagement (measured once, ~24h after posting) for the Popularity board.
+alter table public.posts add column if not exists reactions int;
+alter table public.posts add column if not exists comments int;
+alter table public.posts add column if not exists reposts int;
+alter table public.posts add column if not exists engagement int;      -- hype points
+alter table public.posts add column if not exists engagement_at timestamptz;
+
+-- Hourly engagement sweep (requires the scoring secrets to be configured).
+-- Replace YOUR_SCORE_HOOK_SECRET with the SCORE_HOOK_SECRET function secret:
+-- create extension if not exists pg_cron;
+-- create extension if not exists pg_net;
+-- select cron.schedule('engagement-sweep', '7 * * * *',
+--   $$select net.http_post(
+--       url := 'https://YOUR_PROJECT.supabase.co/functions/v1/slack-events?hook=YOUR_SCORE_HOOK_SECRET&sweep=1',
+--       body := '{}'::jsonb,
+--       timeout_milliseconds := 30000)$$);
+
 -- Read-only for the public (anon key); writes happen only via the
 -- edge function, which uses the service role and bypasses RLS.
 alter table public.members enable row level security;
