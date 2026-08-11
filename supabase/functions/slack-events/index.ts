@@ -28,6 +28,14 @@ const BUCKET = "leaderboard";
 const SNAPSHOT_FILE = "leaderboard.json";
 const LINKEDIN_RE = /https?:\/\/(?:[a-z0-9-]+\.)*linkedin\.com\/[^\s<>|"']+/i;
 
+// Quality scoring (optional — activates when APIFY_TOKEN + GEMINI_API_KEY +
+// SCORE_HOOK_SECRET are set): Apify fetches the post content, Gemini scores it
+// 1-10, and posts scoring >= STANDOUT_MIN get 💎 treatment on the dashboard.
+// Raw scores are never published; only standouts appear in the snapshot.
+const APIFY_ACTOR = "apimaestro~linkedin-post-detail";
+const GEMINI_MODEL = "gemini-2.5-flash";
+const STANDOUT_MIN = 8;
+
 Deno.serve(async (req) => {
   if (req.method !== "POST") {
     // Opening the function URL in a browser (GET) rebuilds the snapshot —
@@ -36,6 +44,13 @@ Deno.serve(async (req) => {
     return new Response("ok");
   }
   const body = await req.text();
+
+  // Apify score-callback path (authenticated by the shared hook secret)
+  const reqUrl = new URL(req.url);
+  const hookSecret = Deno.env.get("SCORE_HOOK_SECRET");
+  if (hookSecret && reqUrl.searchParams.get("hook") === hookSecret) {
+    return await handleScoreCallback(reqUrl, body);
+  }
 
   let payload: any;
   try {
@@ -160,7 +175,7 @@ async function recordPost(
     return;
   }
   const postedAt = new Date(parseFloat(ts) * 1000).toISOString();
-  const { error } = await supabase.from("posts").upsert(
+  const { data: row, error } = await supabase.from("posts").upsert(
     {
       member_id: member.id,
       slack_user_id: slackUserId,
@@ -172,12 +187,137 @@ async function recordPost(
     // Update on conflict so an edited message replaces its URL; Slack retries
     // rewrite identical values, so counting stays deduped either way.
     { onConflict: "slack_ts", ignoreDuplicates: false },
-  );
+  ).select("id").single();
   if (error) {
     console.error("insert failed:", error);
     return;
   }
+  if (row) await startScoring(row.id, url);
   await rebuildSnapshot();
+}
+
+/* ---------------- quality scoring ---------------- */
+
+async function startScoring(postId: number, postUrl: string): Promise<void> {
+  // Must never throw: a scoring hiccup may not block counting or the rebuild.
+  try {
+    const token = Deno.env.get("APIFY_TOKEN");
+    const secret = Deno.env.get("SCORE_HOOK_SECRET");
+    const base = Deno.env.get("SUPABASE_URL");
+    if (!token || !secret || !base) return; // scoring not configured — counting still works
+    const callback =
+      `${base}/functions/v1/slack-events?hook=${encodeURIComponent(secret)}&post=${postId}`;
+    const webhooks = btoa(JSON.stringify([
+      { eventTypes: ["ACTOR.RUN.SUCCEEDED"], requestUrl: callback },
+    ]));
+    const res = await fetch(
+      `https://api.apify.com/v2/acts/${APIFY_ACTOR}/runs?webhooks=${encodeURIComponent(webhooks)}`,
+      {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ post_urls: [postUrl] }),
+      },
+    );
+    if (!res.ok) console.error("apify run start failed:", res.status, await res.text());
+  } catch (e) {
+    console.error("apify run start failed:", e);
+  }
+}
+
+// Non-2xx responses make Apify retry the webhook with backoff, so transient
+// failures return 5xx (the whole path is idempotent); permanent conditions
+// (no text, scoring unconfigured, unparseable score) return 200 to stop retries.
+async function handleScoreCallback(reqUrl: URL, body: string): Promise<Response> {
+  try {
+    const postId = parseInt(reqUrl.searchParams.get("post") ?? "", 10);
+    const datasetId = JSON.parse(body)?.resource?.defaultDatasetId;
+    if (!postId || !datasetId) return new Response("bad hook payload", { status: 400 });
+
+    const token = Deno.env.get("APIFY_TOKEN");
+    const res = await fetch(
+      `https://api.apify.com/v2/datasets/${datasetId}/items?clean=true&limit=1`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+    if (!res.ok) {
+      console.error("dataset fetch failed:", res.status);
+      return new Response("dataset fetch failed", { status: 502 });
+    }
+    const items = await res.json();
+    const text: string | undefined = items?.[0]?.post?.text;
+    if (!text || !text.trim()) {
+      console.log(`no post text for post ${postId} — leaving unscored`);
+      return new Response("ok");
+    }
+
+    const score = await scoreWithGemini(text); // throws on retryable failures
+    if (score === null) return new Response("ok");
+    const { error } = await supabase
+      .from("posts").update({ quality_score: score }).eq("id", postId);
+    if (error) {
+      console.error("score update failed:", error);
+      return new Response("db update failed", { status: 500 });
+    }
+    await rebuildSnapshot();
+    // Self-healing second pass: a concurrent event-driven rebuild that read the
+    // table before our score landed could overwrite this upload moments later.
+    const again = new Promise((r) => setTimeout(r, 5000)).then(() => rebuildSnapshot());
+    if (typeof EdgeRuntime !== "undefined" && EdgeRuntime?.waitUntil) {
+      EdgeRuntime.waitUntil(again);
+    }
+  } catch (e) {
+    console.error("score callback failed:", e);
+    return new Response("error", { status: 500 });
+  }
+  return new Response("ok");
+}
+
+async function scoreWithGemini(text: string): Promise<number | null> {
+  const key = Deno.env.get("GEMINI_API_KEY");
+  if (!key) return null;
+  const prompt =
+    "You score LinkedIn posts for a friendly internal team leaderboard. " +
+    "Score this post 1-10 for quality: substance and real insight (not generic " +
+    "platitudes), personal voice or original angle, structure and readability, " +
+    "value to the reader. Penalize pure link-drops, engagement bait, and " +
+    "hashtag stuffing. Return only JSON.\n\nPOST:\n" + text.slice(0, 4000);
+  const res = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`,
+    {
+      method: "POST",
+      headers: { "x-goog-api-key": key, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: "OBJECT",
+            properties: { score: { type: "INTEGER" } },
+            required: ["score"],
+          },
+          temperature: 0.2,
+          thinkingConfig: { thinkingBudget: 0 },
+        },
+      }),
+    },
+  );
+  if (!res.ok) {
+    const detail = await res.text();
+    console.error("gemini error:", res.status, detail.slice(0, 300));
+    // Rate limits / server errors are worth an Apify webhook retry; auth or
+    // bad-request errors won't improve on retry — skip permanently.
+    if (res.status === 429 || res.status >= 500) {
+      throw new Error(`gemini transient failure: ${res.status}`);
+    }
+    return null;
+  }
+  try {
+    const data = await res.json();
+    const score = JSON.parse(data.candidates[0].content.parts[0].text).score;
+    return Math.max(1, Math.min(10, Math.round(Number(score))));
+  } catch (e) {
+    console.error("gemini parse failed:", e);
+    return null;
+  }
 }
 
 /* ---------------- member matching ---------------- */
@@ -249,20 +389,24 @@ function dayInTz(iso: string | Date): string {
 }
 
 // PostgREST caps a single response at 1000 rows — page through everything.
-async function fetchAllPosts(): Promise<
-  { member_id: number; url: string | null; posted_at: string }[]
-> {
+type PostRow = {
+  member_id: number; url: string | null; posted_at: string;
+  quality_score: number | null;
+};
+async function fetchAllPosts(): Promise<PostRow[] | null> {
   const PAGE = 1000;
-  const all: { member_id: number; url: string | null; posted_at: string }[] = [];
+  const all: PostRow[] = [];
   for (let from = 0; ; from += PAGE) {
     const { data, error } = await supabase
       .from("posts")
-      .select("member_id,url,posted_at")
+      .select("member_id,url,posted_at,quality_score")
       .order("posted_at", { ascending: false })
       .range(from, from + PAGE - 1);
     if (error) {
+      // Signal failure — a failed read must never masquerade as "zero posts"
+      // or the rebuild would overwrite the live board with an empty one.
       console.error("posts page failed:", error);
-      break;
+      return null;
     }
     all.push(...(data ?? []));
     if (!data || data.length < PAGE) break;
@@ -281,6 +425,10 @@ async function rebuildSnapshot(): Promise<void> {
   const members = membersRes.data;
   if (!members) {
     console.error("could not load members:", membersRes.error);
+    return;
+  }
+  if (posts === null) {
+    console.error("posts fetch failed — keeping the existing snapshot untouched");
     return;
   }
 
@@ -315,8 +463,23 @@ async function rebuildSnapshot(): Promise<void> {
 
   const recent = posts.slice(0, 12).map((p) => {
     const m = memberById.get(p.member_id);
-    return { name: m?.name ?? "?", emoji: m?.emoji ?? "🙂", url: p.url, at: p.posted_at };
+    return {
+      name: m?.name ?? "?", emoji: m?.emoji ?? "🙂", url: p.url, at: p.posted_at,
+      standout: (p.quality_score ?? 0) >= STANDOUT_MIN,
+    };
   });
+
+  // Only standouts are published — low scores stay private by design.
+  const standouts = posts
+    .filter((p) => (p.quality_score ?? 0) >= STANDOUT_MIN)
+    .slice(0, 50)
+    .map((p) => {
+      const m = memberById.get(p.member_id);
+      return {
+        name: m?.name ?? "?", emoji: m?.emoji ?? "🙂", url: p.url,
+        at: p.posted_at, score: p.quality_score,
+      };
+    });
 
   const snapshot = {
     updatedAt: new Date().toISOString(),
@@ -333,6 +496,7 @@ async function rebuildSnapshot(): Promise<void> {
       };
     }),
     recent,
+    standouts,
   };
 
   const { error } = await supabase.storage.from(BUCKET).upload(

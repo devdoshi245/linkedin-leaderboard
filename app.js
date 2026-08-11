@@ -24,7 +24,7 @@
     feedEmpty: $("feedEmpty"), channelHint: $("channelHint"), updatedAt: $("updatedAt"),
     toast: $("toast"), confetti: $("confetti"), tooltip: $("tooltip"),
     raceNudge: $("raceNudge"), raceCountdown: $("raceCountdown"),
-    hof: $("hof"), hofEmpty: $("hofEmpty"),
+    hof: $("hof"), hofEmpty: $("hofEmpty"), bestPost: $("bestPost"),
   };
 
   const state = {
@@ -125,6 +125,10 @@
     if (Number(m.maxStreak || 0) >= 30) out.push({ e: "🌋", t: "30-day streak club" });
     else if (Number(m.maxStreak || 0) >= 7) out.push({ e: "⚡", t: "7-day streak club" });
     if (Number(m.weekWins || 0) > 0) out.push({ e: "👑", t: m.weekWins + "× weekly champion" });
+    if (Number(m.standoutCount || 0) > 0) {
+      out.push({ e: "💎", t: m.standoutCount + " standout post" +
+        (m.standoutCount === 1 ? "" : "s") + " — the AI was impressed" });
+    }
     if (Number(m.total || 0) >= 100) out.push({ e: "💯", t: "Centurion — 100 posts" });
     return out;
   }
@@ -212,6 +216,18 @@
       for (const mi of w.winners) members[mi].weekWins = (members[mi].weekWins || 0) + 1;
     }
 
+    // 💎 standouts (AI-scored quality picks published by the webhook)
+    const standouts = Array.isArray(raw.standouts) ? raw.standouts : [];
+    const standoutByName = {};
+    for (const s of standouts) standoutByName[s.name] = (standoutByName[s.name] || 0) + 1;
+    for (const m of members) m.standoutCount = standoutByName[m.name] || 0;
+    let bestPostWeek = null;
+    for (const s of standouts) {
+      const dt = s.at ? new Date(s.at) : null;
+      if (!dt || isNaN(dt) || dayInTz(dt, tz) < weekStart) continue; // bad date ≠ blank board
+      if (!bestPostWeek || Number(s.score || 0) > Number(bestPostWeek.score || 0)) bestPostWeek = s;
+    }
+
     let daily;
     if (members.some((m) => m.days)) {
       daily = [];
@@ -225,7 +241,7 @@
     } else {
       daily = Array.isArray(raw.daily) ? raw.daily : [];
     }
-    return { ...raw, members, daily, weekStart, monthStart, hallOfFame };
+    return { ...raw, members, daily, weekStart, monthStart, hallOfFame, bestPostWeek };
   }
 
   /* ---------- rendering ---------- */
@@ -287,6 +303,16 @@
       }
     }
     els.raceNudge.textContent = msg;
+
+    if (d.bestPostWeek) {
+      const bp = d.bestPostWeek;
+      els.bestPost.hidden = false;
+      els.bestPost.innerHTML = "💎 Post of the week: " +
+        esc((bp.emoji || "") + " " + bp.name) +
+        (bp.url ? ' — <a href="' + esc(bp.url) + '" target="_blank" rel="noopener noreferrer">read it ↗</a>' : "");
+    } else {
+      els.bestPost.hidden = true;
+    }
   }
 
   function renderHof(d) {
@@ -384,8 +410,9 @@
       const key = (p.url || "") + "|" + (p.at || "");
       const isNew = !state.firstLoad && !state.seenFeedKeys.has(key);
       state.seenFeedKeys.add(key);
+      const gem = p.standout ? '<span title="Standout post — the AI was impressed">💎</span> ' : "";
       const link = p.url
-        ? '<a href="' + esc(p.url) + '" target="_blank" rel="noopener noreferrer">View ↗</a>' : "";
+        ? gem + '<a href="' + esc(p.url) + '" target="_blank" rel="noopener noreferrer">View ↗</a>' : gem;
       return (
         '<li class="' + (isNew ? "new" : "") + '">' +
           '<span class="f-emoji">' + esc(p.emoji || "🙂") + "</span>" +

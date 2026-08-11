@@ -19,6 +19,10 @@ create table if not exists public.posts (
   posted_at timestamptz not null default now()
 );
 
+-- AI quality score (1-10), written by the optional scoring pipeline.
+-- Kept as an idempotent alter so re-running this file upgrades old installs.
+alter table public.posts add column if not exists quality_score int;
+
 -- Read-only for the public (anon key); writes happen only via the
 -- edge function, which uses the service role and bypasses RLS.
 alter table public.members enable row level security;

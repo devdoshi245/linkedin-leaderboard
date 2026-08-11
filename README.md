@@ -38,6 +38,11 @@ Slack channel                Supabase                              GitHub Pages
 
 - 🏁 **The Weekly Race** — the default view. Resets every Monday (IST) with a live
   countdown and closest-race callouts ("Fiza is 1 post from overtaking Dev 👀")
+- 💎 **AI quality scoring** *(optional)* — every posted link's content is fetched
+  (Apify) and scored 1–10 by Gemini for substance, originality, and readability.
+  High scorers get a 💎 Standout mark in the feed, a 💎 badge, and the weekly
+  "Post of the week" honor. **Low scores are never shown anywhere** — all
+  carrot, no stick. Cost: ~$0.005/post (Apify) + free-tier Gemini.
 - 🏆 **Hall of Fame** — each week's champion is enshrined forever
 - 🎖️ **Badges** — 🩸 First Blood, 🐣 Early Bird (before 9am), 🦉 Night Owl (after
   10pm), 🎩 Hat-trick (3 in a day), ⚡/🌋 streak clubs (7/30 days), 👑 weekly-champion
@@ -72,6 +77,11 @@ Slack channel                Supabase                              GitHub Pages
 3. **Edge Functions → slack-events → Secrets**, add:
    - `SLACK_SIGNING_SECRET` — from step 2 below
    - `SLACK_BOT_TOKEN` — from step 2 below
+   - `SLACK_CHANNEL_ID` *(optional)* — lock the webhook to specific channel ID(s)
+   - For 💎 AI quality scoring *(optional — skip all three to disable)*:
+     `APIFY_TOKEN` (apify.com → Settings → Integrations), `GEMINI_API_KEY`
+     (Google AI Studio), and `SCORE_HOOK_SECRET` (any long random string —
+     authenticates Apify's callback)
 
 ### 2. Slack (~3 minutes)
 
