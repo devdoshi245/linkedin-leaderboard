@@ -48,7 +48,8 @@ insert into public.members (name, emoji) values
   ('Sasha', '🦊'),
   ('Jainendra', '🛸'),
   ('Megha', '🌈'),
-  ('Veena', '🎵')
+  ('Veena', '🎵'),
+  ('Sujan', '🦅')
 on conflict (name) do nothing;
 
 -- Public storage bucket for the leaderboard.json snapshot the dashboard reads.
