@@ -1,0 +1,23 @@
+# Slack app manifest — paste this at https://api.slack.com/apps → Create New App → From a manifest
+# (If URL verification fails during creation, deploy the slack-events edge function first.)
+display_information:
+  name: LinkedIn Leaderboard
+  description: Counts LinkedIn posts shared in the channel and feeds the live leaderboard
+  background_color: "#2a78d6"
+features:
+  bot_user:
+    display_name: leaderboard-bot
+    always_online: true
+oauth_config:
+  scopes:
+    bot:
+      - channels:history   # read messages in public channels the bot is in
+      - users:read         # match Slack users to leaderboard names
+settings:
+  event_subscriptions:
+    request_url: https://cuixaylpnioceqwdibad.supabase.co/functions/v1/slack-events
+    bot_events:
+      - message.channels
+  org_deploy_enabled: false
+  socket_mode_enabled: false
+  token_rotation_enabled: false

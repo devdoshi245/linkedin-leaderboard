@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LinkedIn Leaderboard 🏆</title>
+<meta name="description" content="Live LinkedIn posting leaderboard — post in Slack, climb the board.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🏆</text></svg>">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="page">
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="trophy" aria-hidden="true">🏆</span>
+      <div>
+        <h1>LinkedIn Leaderboard</h1>
+        <p class="tagline" id="tagline">Post. Climb. Gloat.</p>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <div class="live-pill" id="livePill" title="Auto-refreshing">
+        <span class="live-dot"></span><span id="liveLabel">LIVE</span>
+      </div>
+      <button class="theme-btn" id="themeToggle" title="Toggle theme" aria-label="Toggle theme">🌗</button>
+    </div>
+  </header>
+
+  <section class="stats" id="statTiles" aria-label="Summary stats">
+    <div class="tile"><div class="tile-label">Total posts</div><div class="tile-value" id="statTotal">–</div></div>
+    <div class="tile"><div class="tile-label">This week</div><div class="tile-value" id="statWeek">–</div></div>
+    <div class="tile"><div class="tile-label">Today</div><div class="tile-value" id="statToday">–</div></div>
+    <div class="tile"><div class="tile-label">Reigning champ</div><div class="tile-value tile-champ" id="statChamp">–</div></div>
+  </section>
+
+  <main class="grid">
+    <section class="card board-card">
+      <div class="card-head">
+        <h2>The Board</h2>
+        <div class="seg" role="tablist" aria-label="Time range">
+          <button class="seg-btn" data-view="week" role="tab">This week</button>
+          <button class="seg-btn" data-view="month" role="tab">This month</button>
+          <button class="seg-btn active" data-view="total" role="tab" aria-selected="true">All-time</button>
+        </div>
+      </div>
+      <div class="podium" id="podium" aria-label="Top three"></div>
+      <ol class="board" id="board"></ol>
+      <p class="empty" id="emptyMsg" hidden>No posts yet — the board is a blank canvas. First link wins the crown 👑</p>
+    </section>
+
+    <aside class="side">
+      <section class="card">
+        <div class="card-head"><h2>Last 14 days</h2></div>
+        <div class="chart-wrap" id="chart" aria-label="Posts per day, last 14 days"></div>
+      </section>
+      <section class="card">
+        <div class="card-head"><h2>Recent posts</h2></div>
+        <ul class="feed" id="feed"></ul>
+        <p class="empty" id="feedEmpty" hidden>Fresh posts will show up here the second they land in Slack ⚡</p>
+      </section>
+    </aside>
+  </main>
+
+  <footer class="foot">
+    Drop a LinkedIn post link in <b id="channelHint">#linkedin-leaderboard</b> on Slack — the board updates live ⚡
+    <span class="updated" id="updatedAt"></span>
+  </footer>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<canvas id="confetti" aria-hidden="true"></canvas>
+<div class="tooltip" id="tooltip" hidden></div>
+
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,4 @@
+# Supabase CLI config — only needed if deploying with `supabase functions deploy`.
+# Slack calls the webhook with no Authorization header, so JWT verification must be off.
+[functions.slack-events]
+verify_jwt = false
