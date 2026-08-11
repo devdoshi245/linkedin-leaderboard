@@ -4,7 +4,8 @@ A live, friendly-competition dashboard for the team. Post a LinkedIn link in the
 Slack channel → your count goes up on the board within seconds. Crowns, streaks,
 confetti — the works.
 
-**Live board:** https://devdoshi245.github.io/linkedin-leaderboard/
+**Live board:** https://linkedin-leaderboard-mu.vercel.app
+(mirror: https://devdoshi245.github.io/linkedin-leaderboard/)
 
 ## How it works
 
