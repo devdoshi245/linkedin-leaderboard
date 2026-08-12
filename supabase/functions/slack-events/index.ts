@@ -348,14 +348,24 @@ async function handleScoreCallback(reqUrl: URL, body: string): Promise<Response>
       return new Response("dataset fetch failed", { status: 502 });
     }
     const items = await res.json();
-    const text: string | undefined = items?.[0]?.post?.text;
+    const item = items?.[0];
+
+    // Credit the post's real LinkedIn AUTHOR when they're on the board — so a
+    // teammate pasting the founders' links still scores points for the founders.
+    const reattributed = await reattributeByAuthor(postId, item);
+
+    const text: string | undefined = item?.post?.text;
     if (!text || !text.trim()) {
       console.log(`no post text for post ${postId} — leaving unscored`);
+      if (reattributed) await rebuildSnapshot();
       return new Response("ok");
     }
 
     const score = await scoreWithGemini(text); // throws on retryable failures
-    if (score === null) return new Response("ok");
+    if (score === null) {
+      if (reattributed) await rebuildSnapshot();
+      return new Response("ok");
+    }
     const { error } = await supabase
       .from("posts").update({ quality_score: score }).eq("id", postId);
     if (error) {
@@ -374,6 +384,39 @@ async function handleScoreCallback(reqUrl: URL, body: string): Promise<Response>
     return new Response("error", { status: 500 });
   }
   return new Response("ok");
+}
+
+// If the scraped post's author matches a board member (full name, else unique
+// first name), move the credit to them. Returns true when the row changed.
+async function reattributeByAuthor(postId: number, item: any): Promise<boolean> {
+  try {
+    const authorName = item?.author?.name;
+    if (!authorName) return false;
+    const { data: members } = await supabase.from("members").select("id,name");
+    if (!members) return false;
+    const n = norm(String(authorName));
+    let match = members.find((m) => norm(m.name) === n);
+    if (!match) {
+      const first = n.split(" ")[0];
+      const hits = members.filter((m) => norm(m.name).split(" ")[0] === first);
+      if (hits.length === 1) match = hits[0];
+    }
+    if (!match) return false; // author not on the board — Slack poster keeps credit
+    const { data: row } = await supabase
+      .from("posts").select("member_id").eq("id", postId).maybeSingle();
+    if (!row || row.member_id === match.id) return false;
+    const { error } = await supabase
+      .from("posts").update({ member_id: match.id }).eq("id", postId);
+    if (error) {
+      console.error("author reattribution failed:", error);
+      return false;
+    }
+    console.log(`post ${postId} re-attributed to ${match.name} (LinkedIn author: ${authorName})`);
+    return true;
+  } catch (e) {
+    console.error("author reattribution failed:", e);
+    return false;
+  }
 }
 
 async function scoreWithGemini(text: string): Promise<number | null> {

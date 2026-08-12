@@ -118,7 +118,10 @@ lives in [`config.js`](config.js):
 
 ## Rules of the game
 
-- Any message in the channel containing a `linkedin.com` link = **+1** for the poster.
+- Any message in the channel containing a `linkedin.com` link = **+1**. The point
+  goes to the post's **LinkedIn author** when they're on the board (so pasting
+  the founders' links credits the founders — the flip happens ~a minute after
+  posting); if the author isn't on the board, the Slack poster keeps the credit.
 - Reposting the same message twice counts twice (be honorable 😄), but Slack
   retries/edits never double-count — deduped by message timestamp.
 - Deleting your Slack message removes the point. Editing the link out does too,
