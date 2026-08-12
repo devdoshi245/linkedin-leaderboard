@@ -91,6 +91,19 @@
       Number(b.total || 0) - Number(a.total || 0) ||
       String(a.name).localeCompare(String(b.name)));
   }
+  // Group a sorted list into tie groups (equal metric value, > 0 only):
+  // five people at 1 post = one shared first place.
+  function rankGroups(list, getVal) {
+    const groups = [];
+    for (const m of list) {
+      const v = getVal(m);
+      if (v <= 0) break;
+      const g = groups[groups.length - 1];
+      if (g && g.value === v) g.members.push(m);
+      else groups.push({ value: v, members: [m] });
+    }
+    return groups;
+  }
   /* ---------- levels & badges ---------- */
   const LEVELS = [
     { min: 100, icon: "🏆", title: "LinkedIn Legend" },
@@ -301,7 +314,10 @@
     if (!list.length || w(list[0]) === 0) {
       msg = "Nobody has posted this week — first link takes the crown 👑";
     } else if (list[1] && w(list[1]) === w(list[0])) {
-      msg = list[0].name + " & " + list[1].name + " are tied for the crown 👀";
+      const tied = list.filter((m) => w(m) === w(list[0])).length;
+      msg = tied > 2
+        ? tied + "-way tie for the crown — one post breaks it 👀"
+        : list[0].name + " & " + list[1].name + " are tied for the crown 👀";
     } else {
       let best = null;
       for (let i = 1; i < Math.min(list.length, 4); i++) {
@@ -351,9 +367,11 @@
         : "Hype gets measured ~24 hours after each post ⏱ Numbers land here automatically.";
     }
     const max = Math.max(1, ...ranked.map((m) => Number(m[key])));
+    let hypeRank = 0, hypePrev = null;
     els.hypeBoard.innerHTML = ranked.slice(0, 8).map((m, i) => {
       const n = Number(m[key]);
-      const medal = i < 3 ? ["🚀", "📈", "💬"][i] : String(i + 1);
+      if (n !== hypePrev) { hypeRank = i + 1; hypePrev = n; }
+      const medal = hypeRank <= 3 ? ["🚀", "📈", "💬"][hypeRank - 1] : String(hypeRank);
       return (
         '<li class="row">' +
           '<div class="rank">' + medal + "</div>" +
@@ -402,27 +420,40 @@
     els.statTotal.textContent = total;
     els.statWeek.textContent = week;
     els.statToday.textContent = today;
-    const champ = sorted(d.members, "total")[0];
-    els.statChamp.textContent =
-      champ && Number(champ.total || 0) > 0 ? (champ.emoji || "🙂") + " " + champ.name.split(" ")[0] : "Up for grabs";
+    const byTotal = sorted(d.members, "total");
+    const champs = rankGroups(byTotal, (m) => Number(m.total || 0))[0];
+    els.statChamp.textContent = !champs ? "Up for grabs"
+      : champs.members.length === 1
+        ? (champs.members[0].emoji || "🙂") + " " + champs.members[0].name.split(" ")[0]
+      : champs.members.length === 2
+        ? champs.members[0].name + " & " + champs.members[1].name
+      : champs.members.length + "-way tie 🔥";
   }
 
   function renderPodium(d) {
-    const top = sorted(d.members, state.view).slice(0, 3);
-    // visual order: 2nd, 1st, 3rd
-    const order = [top[1], top[0], top[2]];
+    const list = sorted(d.members, state.view);
+    const groups = rankGroups(list, (m) => metric(m, state.view)).slice(0, 3);
+    // visual order: 2nd, 1st, 3rd — each step holds the whole tie group
+    const order = [groups[1], groups[0], groups[2]];
     const cls = ["pod-2", "pod-1", "pod-3"];
     const medal = ["2", "1", "3"];
-    els.podium.innerHTML = order.map((m, i) => {
-      if (!m) return "<div></div>";
-      const n = metric(m, state.view);
-      const ghost = n === 0 ? " ghost" : "";
-      const crown = cls[i] === "pod-1" && n > 0 ? '<span class="crown">👑</span>' : "";
+    els.podium.innerHTML = order.map((g, i) => {
+      if (!g) return "<div></div>";
+      const gold = cls[i] === "pod-1";
+      const shown = g.members.slice(0, 5);
+      const avatars = shown.map((m) =>
+        '<div class="avatar" title="' + esc(m.name) + '">' + esc(m.emoji || "🙂") + "</div>").join("");
+      const more = g.members.length > 5
+        ? '<div class="avatar pod-more">+' + (g.members.length - 5) + "</div>" : "";
+      const crown = gold ? '<span class="crown">👑</span>' : "";
+      const names = g.members.slice(0, 3).map((m) => esc(m.name)).join(", ") +
+        (g.members.length > 3 ? " +" + (g.members.length - 3) : "");
       return (
-        '<div class="pod ' + cls[i] + ghost + '">' +
-          '<div class="avatar">' + crown + esc(m.emoji || "🙂") + "</div>" +
-          '<div class="pod-name">' + esc(m.name) + "</div>" +
-          '<div class="pod-count">' + n + (n === 1 ? " post" : " posts") + "</div>" +
+        '<div class="pod ' + cls[i] + '">' +
+          '<div class="pod-avatars">' + crown + avatars + more + "</div>" +
+          '<div class="pod-name">' + names + "</div>" +
+          '<div class="pod-count">' + g.value + (g.value === 1 ? " post" : " posts") +
+            (g.members.length > 1 ? " each" : "") + "</div>" +
           '<div class="pod-base">' + medal[i] + "</div>" +
         "</div>");
     }).join("");
@@ -433,13 +464,15 @@
     const max = Math.max(1, ...list.map((m) => metric(m, state.view)));
     const prev = state.prevRanks[state.view] || {};
     const ranks = {};
+    let curRank = 0, prevVal = null;
     els.board.innerHTML = list.map((m, i) => {
-      ranks[m.name] = i;
       const n = metric(m, state.view);
-      const movedUp = prev[m.name] !== undefined && i < prev[m.name];
+      if (n !== prevVal) { curRank = i + 1; prevVal = n; } // ties share a rank
+      ranks[m.name] = curRank;
+      const movedUp = prev[m.name] !== undefined && curRank < prev[m.name];
       const streak = Number(m.streak || 0) >= 2
         ? '<span class="streak" title="' + m.streak + '-day posting streak">🔥 ' + m.streak + "d</span>" : "";
-      const medal = n > 0 && i < 3 ? ["👑", "🥈", "🥉"][i] : String(i + 1);
+      const medal = n > 0 && curRank <= 3 ? ["👑", "🥈", "🥉"][curRank - 1] : String(curRank);
       const lv = levelFor(Number(m.total || 0));
       const badges = badgesFor(m);
       const badgeHtml = badges.length
