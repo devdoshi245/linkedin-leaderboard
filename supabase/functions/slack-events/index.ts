@@ -26,7 +26,9 @@ const supabase = createClient(
 const TIMEZONE = "Asia/Kolkata";
 const BUCKET = "leaderboard";
 const SNAPSHOT_FILE = "leaderboard.json";
-const LINKEDIN_RE = /https?:\/\/(?:[a-z0-9-]+\.)*linkedin\.com\/[^\s<>|"']+/i;
+// Matches full linkedin.com URLs and LinkedIn's own lnkd.in short links
+// (the mobile share sheet produces those).
+const LINKEDIN_RE = /https?:\/\/(?:[a-z0-9-]+\.)*(?:linkedin\.com|lnkd\.in)\/[^\s<>|"']+/i;
 
 // Quality scoring (optional — activates when APIFY_TOKEN + GEMINI_API_KEY +
 // SCORE_HOOK_SECRET are set): Apify fetches the post content, Gemini scores it
@@ -121,6 +123,38 @@ function extractLinkedInUrl(text: string): string | null {
   return m ? m[0].replace(/[>,.)\]]+$/, "") : null;
 }
 
+// lnkd.in short links redirect to the real post URL — resolve them so the
+// stored URL is canonical (dedupe, scraping, and feed links all benefit).
+// Never throws; falls back to the original URL.
+async function resolveLinkedInUrl(url: string): Promise<string> {
+  try {
+    let current = url;
+    for (let hop = 0; hop < 3; hop++) {
+      const host = new URL(current).hostname.toLowerCase();
+      if (!host.endsWith("lnkd.in")) break;
+      const res = await fetch(current, {
+        method: "GET",
+        redirect: "manual",
+        headers: { "User-Agent": "Mozilla/5.0" },
+      });
+      const loc = res.headers.get("location");
+      // drain/cancel the body so the connection is released
+      try { await res.body?.cancel(); } catch { /* ignore */ }
+      if (!loc) break;
+      current = new URL(loc, current).toString();
+    }
+    const u = new URL(current);
+    if (u.hostname.toLowerCase().endsWith("linkedin.com")) {
+      u.search = ""; // strip utm/tracking noise
+      return u.toString();
+    }
+    return url;
+  } catch (e) {
+    console.error("url resolution failed:", e);
+    return url;
+  }
+}
+
 function channelAllowed(channel: string | undefined): boolean {
   const allow = (Deno.env.get("SLACK_CHANNEL_ID") ?? "")
     .split(",").map((s) => s.trim()).filter(Boolean);
@@ -171,6 +205,7 @@ async function recordPost(
   channel: string | undefined,
 ): Promise<void> {
   if (!slackUserId || !ts) return;
+  url = await resolveLinkedInUrl(url);
   const member = await resolveMember(slackUserId);
   if (!member) {
     console.log(`no leaderboard member matched slack user ${slackUserId} — ignoring`);
